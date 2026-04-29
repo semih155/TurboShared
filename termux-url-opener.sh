@@ -6,14 +6,93 @@ mkdir -p "$BASE_DIR"
 url=$1
 
 echo "------------------------------------------"
-echo "🚀 TurboShared v4.7 - Klasörlü Toplu İndirici"
+echo "🚀 TurboShared v4.8 - TikTok Lite Destekli"
 echo "🔗 Kaynak: $url"
 echo "------------------------------------------"
 
-# Daha iyi tespit: Profil ise /@kullanıcı şeklinde veya video içermiyor
-if [[ $url == *"tiktok.com/@"* ]] && [[ $url != *"/video/"* ]]; then
-    echo "📌 TikTok **profili** tespit edildi!"
-    read -p "📥 Kaç adet video indireyim? (Örn: 5, hepsi için 0 yaz): " adet
+# ─────────────────────────────────────────────
+# URL TİPİ TESPİT FONKSİYONLARI
+# ─────────────────────────────────────────────
+
+is_tiktok_lite() {
+    [[ $url == *"lite.tiktok.com"* ]] || \
+    [[ $url == *"vm.tiktok.com"* ]] || \
+    [[ $url == *"vt.tiktok.com"* ]] || \
+    [[ $url == *"m.tiktok.com"* ]]
+}
+
+is_tiktok_profile() {
+    [[ $url == *"tiktok.com/@"* ]] && [[ $url != *"/video/"* ]]
+}
+
+is_tiktok_video() {
+    [[ $url == *"tiktok.com"* ]]
+}
+
+# ─────────────────────────────────────────────
+# ORTAK YT-DLP AYARLARI (TikTok için optimize)
+# ─────────────────────────────────────────────
+
+TIKTOK_HEADERS=(
+    --user-agent "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+    --add-header "Referer:https://www.tiktok.com/"
+    --add-header "Accept-Language:tr-TR,tr;q=0.9,en;q=0.8"
+    --add-header "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+)
+
+# ─────────────────────────────────────────────
+# TİKTOK LİTE / KISA LINK (vm. vt. m. lite.)
+# ─────────────────────────────────────────────
+
+if is_tiktok_lite; then
+    echo "📱 TikTok Lite / Kısa link tespit edildi!"
+    echo "🔄 Link çözümleniyor..."
+
+    # Önce linki çözümle (redirect takip et)
+    RESOLVED_URL=$(curl -sI -L --max-redirs 10 \
+        -A "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/121.0.0.0 Mobile Safari/537.36" \
+        "$url" 2>/dev/null | grep -i "^location:" | tail -1 | tr -d '\r' | sed 's/[Ll]ocation: //')
+
+    if [[ -n "$RESOLVED_URL" ]]; then
+        echo "✅ Çözümlendi: $RESOLVED_URL"
+    else
+        echo "⚠️  Otomatik çözümleme başarısız, direkt deneniyor..."
+        RESOLVED_URL="$url"
+    fi
+
+    echo "📥 Video indiriliyor..."
+    yt-dlp \
+        "${TIKTOK_HEADERS[@]}" \
+        --no-playlist \
+        -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best" \
+        --merge-output-format mp4 \
+        --extractor-retries 5 \
+        --retries 10 \
+        --fragment-retries 10 \
+        -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" \
+        "$RESOLVED_URL"
+
+    # Başarısız olursa yedek yöntem dene
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "⚠️  İlk yöntem başarısız, yedek yöntem deneniyor..."
+        yt-dlp \
+            "${TIKTOK_HEADERS[@]}" \
+            --no-playlist \
+            -f "best" \
+            --extractor-retries 5 \
+            --cookies-from-browser chrome \
+            -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" \
+            "$url"
+    fi
+
+# ─────────────────────────────────────────────
+# TİKTOK PROFİL (Toplu İndirme)
+# ─────────────────────────────────────────────
+
+elif is_tiktok_profile; then
+    echo "📌 TikTok profili tespit edildi!"
+    read -p "📥 Kaç adet video indireyim? (Hepsi için 0 yaz): " adet
 
     if [[ $adet == "0" || -z $adet ]]; then
         echo "📂 Tüm videolar indiriliyor (sınırsız)"
@@ -27,16 +106,35 @@ if [[ $url == *"tiktok.com/@"* ]] && [[ $url != *"/video/"* ]]; then
 
     yt-dlp \
         $playlist_option \
-        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0" \
-        --add-header "Referer:https://www.tiktok.com/" \
+        "${TIKTOK_HEADERS[@]}" \
         -f "bestvideo+bestaudio/best" \
         --merge-output-format mp4 \
         -o "$BASE_DIR/%(uploader)s/%(title).50s [%(id)s].%(ext)s" \
         "$url"
 
+# ─────────────────────────────────────────────
+# TİKTOK TEK VİDEO
+# ─────────────────────────────────────────────
+
+elif is_tiktok_video; then
+    echo "🔗 TikTok tek video linki tespit edildi"
+    echo "📂 Tekli mod → TurboShared klasörüne kaydediliyor"
+
+    yt-dlp \
+        --no-playlist \
+        "${TIKTOK_HEADERS[@]}" \
+        -f "bestvideo+bestaudio/best" \
+        --merge-output-format mp4 \
+        -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" \
+        "$url"
+
+# ─────────────────────────────────────────────
+# DİĞER PLATFORMLAR
+# ─────────────────────────────────────────────
+
 else
-    echo "🔗 Tek video linki tespit edildi"
-    echo "📂 Tekli mod → Direkt TurboShared klasörüne kaydediliyor (alt klasör yok)"
+    echo "🌐 Diğer platform tespit edildi"
+    echo "📂 Direkt TurboShared klasörüne kaydediliyor"
 
     yt-dlp \
         --no-playlist \
@@ -47,14 +145,23 @@ else
         "$url"
 fi
 
+# ─────────────────────────────────────────────
+# SONUÇ
+# ─────────────────────────────────────────────
+
+echo "------------------------------------------"
 if [ $? -eq 0 ]; then
-    echo "------------------------------------------"
     echo "✅ İşlem Tamam!"
     echo "📍 Konum: $BASE_DIR/"
 else
-    echo "------------------------------------------"
-    echo "❌ Bir hata oluştu. Linki veya interneti kontrol et."
-    echo "   Not: TikTok bazen engelliyor, VPN deneyebilirsin."
+    echo "❌ Bir hata oluştu."
+    echo ""
+    echo "💡 TikTok Lite için öneriler:"
+    echo "   1. yt-dlp'yi güncelle: yt-dlp -U"
+    echo "   2. VPN dene (farklı ülke)"
+    echo "   3. Linki tarayıcıda aç, tam URL'yi kopyala"
+    echo "   4. TikTok Lite yerine normal TikTok linkini kullan"
 fi
+echo "------------------------------------------"
 
 read -p "Kapatmak için Enter'a bas..."
