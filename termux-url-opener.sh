@@ -3,10 +3,11 @@
 BASE_DIR="/storage/emulated/0/Download/TurboShared"
 mkdir -p "$BASE_DIR"
 
-url=$1
+# URL'yi temizle - TikTok Lite paylaşım metnini at, sadece linki al
+url=$(echo "$1" | grep -oP 'https?://[^\s]+' | head -1)
 
 echo "------------------------------------------"
-echo "🚀 TurboShared v4.8 - TikTok Lite Destekli"
+echo "🚀 TurboShared v4.9 - TikTok Lite Destekli"
 echo "🔗 Kaynak: $url"
 echo "------------------------------------------"
 
@@ -38,6 +39,10 @@ TIKTOK_HEADERS=(
     --add-header "Referer:https://www.tiktok.com/"
     --add-header "Accept-Language:tr-TR,tr;q=0.9,en;q=0.8"
     --add-header "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    --impersonate "chrome"
+    --extractor-retries 5
+    --retries 10
+    --fragment-retries 10
 )
 
 # ─────────────────────────────────────────────
@@ -46,42 +51,24 @@ TIKTOK_HEADERS=(
 
 if is_tiktok_lite; then
     echo "📱 TikTok Lite / Kısa link tespit edildi!"
-    echo "🔄 Link çözümleniyor..."
-
-    # Önce linki çözümle (redirect takip et)
-    RESOLVED_URL=$(curl -sI -L --max-redirs 10 \
-        -A "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/121.0.0.0 Mobile Safari/537.36" \
-        "$url" 2>/dev/null | grep -i "^location:" | tail -1 | tr -d '\r' | sed 's/[Ll]ocation: //')
-
-    if [[ -n "$RESOLVED_URL" ]]; then
-        echo "✅ Çözümlendi: $RESOLVED_URL"
-    else
-        echo "⚠️  Otomatik çözümleme başarısız, direkt deneniyor..."
-        RESOLVED_URL="$url"
-    fi
-
     echo "📥 Video indiriliyor..."
+
     yt-dlp \
         "${TIKTOK_HEADERS[@]}" \
         --no-playlist \
         -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best" \
         --merge-output-format mp4 \
-        --extractor-retries 5 \
-        --retries 10 \
-        --fragment-retries 10 \
         -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" \
-        "$RESOLVED_URL"
+        "$url"
 
-    # Başarısız olursa yedek yöntem dene
+    # Başarısız olursa yedek yöntem
     if [ $? -ne 0 ]; then
         echo ""
-        echo "⚠️  İlk yöntem başarısız, yedek yöntem deneniyor..."
+        echo "⚠️  Yedek yöntem deneniyor..."
         yt-dlp \
             "${TIKTOK_HEADERS[@]}" \
             --no-playlist \
-            -f "best" \
-            --extractor-retries 5 \
-            --cookies-from-browser chrome \
+            -f "b" \
             -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" \
             "$url"
     fi
@@ -156,11 +143,10 @@ if [ $? -eq 0 ]; then
 else
     echo "❌ Bir hata oluştu."
     echo ""
-    echo "💡 TikTok Lite için öneriler:"
+    echo "💡 Öneriler:"
     echo "   1. yt-dlp'yi güncelle: yt-dlp -U"
     echo "   2. VPN dene (farklı ülke)"
-    echo "   3. Linki tarayıcıda aç, tam URL'yi kopyala"
-    echo "   4. TikTok Lite yerine normal TikTok linkini kullan"
+    echo "   3. pip install curl_cffi --break-system-packages"
 fi
 echo "------------------------------------------"
 
