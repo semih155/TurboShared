@@ -1,1 +1,1 @@
-mkdir -p $HOME/bin && curl -L -s "https://raw.githubusercontent.com/semih155/TurboShared/main/termux-url-opener.sh" > $HOME/bin/termux-url-opener && chmod +x $HOME/bin/termux-url-opener && echo -e "\n\033[0;32m[✔] TurboShared v7.8 Basariyla Kuruldu! Ses Sorunu Kökten Çözüldü.\033[0m"
+curl -L -s "https://raw.githubusercontent.com/semih155/TurboShared/main/termux-url-opener.sh" -o $HOME/turbo_kurulum.sh && bash $HOME/turbo_kurulum.sh
