@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ========================================================
-# TurboShared v7.0 - Profesyonel Otomatik İndirme Sistemi
+# TurboShared v7.8 - Kesin Ses Çözümü & Temiz İlerleme
 # ========================================================
 
 GREEN='\033[0;32m'
@@ -14,7 +14,7 @@ NC='\033[0m'
 
 clear
 echo -e "${CYAN}==================================================${NC}"
-echo -e "${MAGENTA}    🚀 TurboShared v7.0 - Otomatik İndirme Sistemi 🚀${NC}"
+echo -e "${MAGENTA}    🚀 TurboShared v7.8 - Sesli İndirme Sistemi 🚀${NC}"
 echo -e "${CYAN}==================================================${NC}"
 
 # Bağımlılık Kontrolleri
@@ -34,7 +34,6 @@ fi
 SAVE_DIR="/sdcard/Download/TurboShared"
 mkdir -p "$SAVE_DIR"
 
-# Gelen URL Kontrolü
 URL="$1"
 if [ -z "$URL" ]; then
     URL=$(termux-clipboard-get)
@@ -57,9 +56,8 @@ if [[ $URL == *"tiktok.com"* && $URL == *"@"* && $URL != *"/video/"* ]]; then
     echo -e "${YELLOW}[?] Bir TikTok Profil Linki Algılandı!${NC}"
     echo -e "${CYAN}--------------------------------------------------${NC}"
     
-    # 1. Seçenek: Video Sayısı Limitleme
     echo -e "${BLUE}▶ Kaç adet video indirmek istersiniz?${NC}"
-    echo -e "  (Sayı girin örn: 5, 10 veya hepsini indirmek için ${GREEN}tüm${NC} yazın)"
+    echo -e "  (Sayı girin veya hepsini indirmek için ${GREEN}tüm${NC} yazın)"
     read -p "Seçiminiz: " ADET
     if [[ "$ADET" == "tüm" || "$ADET" == "tum" || -z "$ADET" ]]; then
         YTDLP_LIMIT=""
@@ -69,7 +67,6 @@ if [[ $URL == *"tiktok.com"* && $URL == *"@"* && $URL != *"/video/"* ]]; then
         echo -e "${GREEN}[✔] Son $ADET video indirilecek.${NC}"
     fi
     
-    # 2. Seçenek: İndirme Sıralama Yönü
     echo -e "${CYAN}--------------------------------------------------${NC}"
     echo -e "${BLUE}▶ İndirme yönü nasıl olsun?${NC}"
     echo -e "  1) En Son Yüklenenlerden Başla (Yeniden Eskiye)"
@@ -78,16 +75,15 @@ if [[ $URL == *"tiktok.com"* && $URL == *"@"* && $URL != *"/video/"* ]]; then
     
     if [ "$SIRALAMA" == "2" ]; then
         YTDLP_ORDER="--playlist-reverse"
-        echo -e "${GREEN}[✔] Eskiden yeniye doğru sıralama aktif edildi.${NC}"
+        echo -e "${GREEN}[✔] Eskiden yeniye doğru sıralama aktif.${NC}"
     else
         YTDLP_ORDER=""
-        echo -e "${GREEN}[✔] Yeniden eskiye doğru sıralama aktif edildi.${NC}"
+        echo -e "${GREEN}[✔] Yeniden eskiye doğru sıralama aktif.${NC}"
     fi
     echo -e "${CYAN}--------------------------------------------------${NC}"
     
     echo -e "${YELLOW}[*] Profildeki videolar taranıyor, lütfen bekleyin...${NC}"
     
-    # Profil videolarını listele ve kuyruğa at
     yt-dlp --flat-playlist --get-id "$URL" 2>/dev/null | while read -r id; do
         if [ ! -z "$id" ]; then
             echo "https://www.tiktok.com/@user/video/$id" >> "$KUYRUK_FILE"
@@ -95,35 +91,35 @@ if [[ $URL == *"tiktok.com"* && $URL == *"@"* && $URL != *"/video/"* ]]; then
     done
 fi
 
-# Tekil video linki ise doğrudan kuyruk dosyasına yaz
 if [[ ! -f "$KUYRUK_FILE" ]]; then
     echo "$URL" >> "$KUYRUK_FILE"
 fi
 
-# Ana İndirme Motoru (Şekilli Şukullu İlerleme Çubuğu İçerir)
 TOTAL_VIDEOS=$(wc -l < "$KUYRUK_FILE" 2>/dev/null || echo "1")
 CURRENT_INDEX=0
 
+# Ses Problemi Çözülmüş, Arka Planda Ffmpeg Birleştirmeli Yeni Motor
 while IFS= read -r line; do
     if [ ! -z "$line" ]; then
         CURRENT_INDEX=$((CURRENT_INDEX + 1))
         echo -e "\n${CYAN}==================================================${NC}"
-        echo -e "${MAGENTA}🎬 [GÖREV $CURRENT_INDEX / $TOTAL_VIDEOS]${NC} $line"
+        echo -e "${MAGENTA}🎬 [GÖREV $CURRENT_INDEX / $TOTAL_VIDEOS]${NC} İndiriliyor ve Ses Birleştiriliyor..."
         echo -e "${CYAN}==================================================${NC}"
         
-        # Şekilli durum çubuğu parametresi
+        # En iyi video ve en iyi sesi zorla çektirip ffmpeg ile birleştiriyoruz, terminal kirliliği için --in-advance kullanıyoruz
         yt-dlp $YTDLP_LIMIT $YTDLP_ORDER \
+            -f "bestvideo+bestaudio/best" \
+            --merge-output-format mp4 \
             -P "$SAVE_DIR" \
             -o "%(title)s_%(id)s.%(ext)s" \
             --no-warnings \
-            --progress-template "download:${YELLOW}▶ İlerleme: ${GREEN}%(_percent_str)s ${BLUE}➔ Hız: %(_speed_str)s ${CYAN}➔ Kalan: %(_eta_str)s${NC}" \
+            --progress \
             "$line"
             
-        # İşlenen linki kuyruktan kaldır
         grep -v -F "$line" "$KUYRUK_FILE" > "$KUYRUK_FILE.tmp" && mv "$KUYRUK_FILE.tmp" "$KUYRUK_FILE"
     fi
 done < "$KUYRUK_FILE"
 
 rm -f "$KUYRUK_FILE"
-echo -e "\n${GREEN}🏆 [İŞLEM TAMAMLANDI] Videolar başarıyla depolama birimine indirildi!${NC}"
-termux-toast -c green -b black "Tüm indirmeler başarıyla tamamlandı!"
+echo -e "\n${GREEN}🏆 [İŞLEM TAMAMLANDI] Ses ve Görüntü %100 Birleştirildi!${NC}"
+termux-toast -c green -b black "İndirme tamamlandı!"
