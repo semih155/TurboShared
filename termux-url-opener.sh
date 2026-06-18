@@ -14,6 +14,36 @@ bildir() {
 url=$(echo "$1" | grep -oP 'https?://[^\s]+' | head -1)
 [[ -z "$url" ]] && exit 1
 
+# ─────────────────────────────────────────────
+# KİLİT GEÇERLİLİK KONTROLÜ (PID + ZAMAN DAMGASI)
+# ─────────────────────────────────────────────
+kilit_gecerli_mi() {
+    [[ ! -f "$KILIT_FILE" ]] && return 1
+
+    local satir pid zaman simdi fark
+    satir=$(cat "$KILIT_FILE")
+    pid=$(echo "$satir" | cut -d'|' -f1)
+    zaman=$(echo "$satir" | cut -d'|' -f2)
+    simdi=$(date +%s)
+
+    # Zaman damgası okunamıyorsa kilit bozuk, geçersiz say
+    [[ -z "$zaman" ]] && return 1
+
+    fark=$((simdi - zaman))
+
+    # 10 dakikadan eskiyse, ne olursa olsun geçersiz say (takılı kalmış kilit)
+    if [ $fark -gt 600 ]; then
+        return 1
+    fi
+
+    # PID hala canlı mı?
+    if kill -0 "$pid" 2>/dev/null; then
+        return 0
+    fi
+
+    return 1
+}
+
 if [[ $url == *"tiktok.com/@"* ]] && [[ $url != *"/video/"* ]]; then
     echo "📌 TikTok profili tespit edildi!"
     read -p "📥 Kaç video indirilsin? (Hepsi için 0): " adet
@@ -25,15 +55,13 @@ fi
 
 bildir "Kuyruga eklendi: $(echo $url | cut -c1-40)..."
 
-if [[ -f "$KILIT_FILE" ]]; then
-    eski_pid=$(cat "$KILIT_FILE")
-    if ! kill -0 "$eski_pid" 2>/dev/null; then
-        rm -f "$KILIT_FILE"
-    fi
+if kilit_gecerli_mi; then
+    bildir "Indirme zaten suruyor, sira bekleniyor..."
+    exit 0
 fi
 
-[[ -f "$KILIT_FILE" ]] && exit 0
-
+# Kilit geçersizse veya yoksa temizle ve worker'ı başlat
+rm -f "$KILIT_FILE"
 bash "$HOME/bin/turbo-worker.sh"
 EOF
 chmod +x ~/bin/termux-url-opener
@@ -51,15 +79,28 @@ bildir() {
     command -v termux-toast >/dev/null 2>&1 && termux-toast "$1"
 }
 
-echo $$ > "$KILIT_FILE"
+# Kilit: PID|ZAMAN formatında, sürekli güncellenecek
+kilit_guncelle() {
+    echo "$$|$(date +%s)" > "$KILIT_FILE"
+}
+
+kilit_guncelle
 command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+
+# Arka planda kilidi periyodik tazeleyen bir izleyici başlat
+( while true; do sleep 60; [[ -f "$KILIT_FILE" ]] && kilit_guncelle; done ) &
+TAZELEYICI_PID=$!
+
+temizlik() {
+    kill "$TAZELEYICI_PID" 2>/dev/null
+    rm -f "$KILIT_FILE"
+    command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock
+}
+trap temizlik EXIT
 
 is_tiktok() { [[ $1 == *"tiktok.com"* ]] || [[ $1 == *"vm.tiktok.com"* ]] || [[ $1 == *"vt.tiktok.com"* ]]; }
 is_facebook() { [[ $1 == *"facebook.com"* ]] || [[ $1 == *"fb.watch"* ]] || [[ $1 == *"fb.com"* ]]; }
 
-# ─────────────────────────────────────────────
-# AĞ KONTROLÜ - VPN değişimi/DNS kopması bekleme
-# ─────────────────────────────────────────────
 ag_bekle() {
     local deneme=0
     echo "Ag baglantisi kontrol ediliyor..."
@@ -74,9 +115,6 @@ ag_bekle() {
     return 1
 }
 
-# ─────────────────────────────────────────────
-# İLERLEME GÖSTERİMİ (ASCII)
-# ─────────────────────────────────────────────
 progress_bar() {
     local pct="$1"
     local width=25
@@ -108,10 +146,6 @@ yt_dlp_ilerlemeli() {
     return ${PIPESTATUS[0]}
 }
 
-# ─────────────────────────────────────────────
-# TEKRAR DENEMELİ İNDİRME SARMALAYICISI
-# Ağ hatası varsa bekler, 2 kez tekrar dener
-# ─────────────────────────────────────────────
 indir_dene() {
     local fonksiyon="$1"
     local u="$2"
@@ -126,12 +160,12 @@ indir_dene() {
             ag_bekle
         fi
 
+        kilit_guncelle
         "$fonksiyon" "$u" "$extra"
         if [ $? -eq 0 ]; then
             return 0
         fi
 
-        # Hata oldu, ag kopmasi mi kontrol et
         if ! ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
             echo "Ag baglantisi kopmus, bekleniyor..."
             ag_bekle
@@ -250,9 +284,6 @@ indir_profil() {
         -o "$out" "$u"
 }
 
-# ─────────────────────────────────────────────
-# BİR LİNKİ İŞLE (normal kuyruk veya tekrar kuyruğu için ortak)
-# ─────────────────────────────────────────────
 link_isle() {
     local satir="$1"
     local url adet
@@ -267,7 +298,7 @@ link_isle() {
 
     echo ""
     echo "========================================"
-    echo "TurboShared v9.2"
+    echo "TurboShared v9.3"
     echo "$url"
     echo "========================================"
 
@@ -301,9 +332,6 @@ link_isle() {
     fi
 }
 
-# ─────────────────────────────────────────────
-# ANA KUYRUK DÖNGÜSÜ
-# ─────────────────────────────────────────────
 while true; do
     satir=$(head -1 "$KUYRUK_FILE" 2>/dev/null)
     [[ -z "$satir" ]] && break
@@ -313,9 +341,6 @@ while true; do
     tail -n +2 "$KUYRUK_FILE" > "$KUYRUK_FILE.tmp" && mv "$KUYRUK_FILE.tmp" "$KUYRUK_FILE"
 done
 
-# ─────────────────────────────────────────────
-# KUYRUK BİTTİ - HATALI LİNKLERİ OTOMATİK TEKRAR DENE
-# ─────────────────────────────────────────────
 if [[ -f "$LOG_FILE" ]] && [[ -s "$LOG_FILE" ]]; then
     echo ""
     echo "========================================"
@@ -336,8 +361,6 @@ if [[ -f "$LOG_FILE" ]] && [[ -s "$LOG_FILE" ]]; then
     rm -f "$LOG_FILE.tekrar"
 fi
 
-command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock
-rm -f "$KILIT_FILE"
 echo ""
 echo "Tum indirmeler tamamlandi! Klasor: $BASE_DIR/"
 if [[ -s "$LOG_FILE" ]]; then
@@ -350,4 +373,4 @@ EOF
 chmod +x ~/bin/turbo-worker.sh
 
 rm -f ~/.turbo_kilit
-echo -e "\e[1;32mv9.2 hazir! Otomatik tekrar deneme + ag bekleme eklendi.\e[0m"
+echo -e "\e[1;32mv9.3 hazir! Takili kalan kilit sorunu kokten cozuldu.\e[0m"
