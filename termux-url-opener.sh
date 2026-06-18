@@ -14,9 +14,6 @@ bildir() {
 url=$(echo "$1" | grep -oP 'https?://[^\s]+' | head -1)
 [[ -z "$url" ]] && exit 1
 
-# ─────────────────────────────────────────────
-# KİLİT GEÇERLİLİK KONTROLÜ (PID + ZAMAN DAMGASI)
-# ─────────────────────────────────────────────
 kilit_gecerli_mi() {
     [[ ! -f "$KILIT_FILE" ]] && return 1
 
@@ -26,17 +23,14 @@ kilit_gecerli_mi() {
     zaman=$(echo "$satir" | cut -d'|' -f2)
     simdi=$(date +%s)
 
-    # Zaman damgası okunamıyorsa kilit bozuk, geçersiz say
     [[ -z "$zaman" ]] && return 1
 
     fark=$((simdi - zaman))
 
-    # 10 dakikadan eskiyse, ne olursa olsun geçersiz say (takılı kalmış kilit)
     if [ $fark -gt 600 ]; then
         return 1
     fi
 
-    # PID hala canlı mı?
     if kill -0 "$pid" 2>/dev/null; then
         return 0
     fi
@@ -60,7 +54,6 @@ if kilit_gecerli_mi; then
     exit 0
 fi
 
-# Kilit geçersizse veya yoksa temizle ve worker'ı başlat
 rm -f "$KILIT_FILE"
 bash "$HOME/bin/turbo-worker.sh"
 EOF
@@ -79,7 +72,6 @@ bildir() {
     command -v termux-toast >/dev/null 2>&1 && termux-toast "$1"
 }
 
-# Kilit: PID|ZAMAN formatında, sürekli güncellenecek
 kilit_guncelle() {
     echo "$$|$(date +%s)" > "$KILIT_FILE"
 }
@@ -87,7 +79,6 @@ kilit_guncelle() {
 kilit_guncelle
 command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
 
-# Arka planda kilidi periyodik tazeleyen bir izleyici başlat
 ( while true; do sleep 60; [[ -f "$KILIT_FILE" ]] && kilit_guncelle; done ) &
 TAZELEYICI_PID=$!
 
@@ -268,7 +259,8 @@ indir_genel() {
 indir_profil() {
     local u="$1"
     local adet="$2"
-    local out="$BASE_DIR/%(uploader)s/%(title).50s [%(id)s].%(ext)s"
+    local tarih=$(date +%Y-%m-%d)
+    local out="$BASE_DIR/$tarih/%(title).50s [%(id)s].%(ext)s"
 
     [[ "$adet" == "0" ]] && playlist_opt="" || playlist_opt="--playlist-items 1-$adet"
 
@@ -298,14 +290,14 @@ link_isle() {
 
     echo ""
     echo "========================================"
-    echo "TurboShared v9.3"
+    echo "TurboShared v9.4"
     echo "$url"
     echo "========================================"
 
     local basarili=1
 
     if [[ -n "$adet" ]]; then
-        echo "Profil indirme modu - $adet video"
+        echo "Profil indirme modu - $adet video (tarihe gore klasorlenecek)"
         indir_dene indir_profil "$url" "$adet" && basarili=0
     elif is_tiktok "$url"; then
         echo "TikTok"
@@ -373,4 +365,4 @@ EOF
 chmod +x ~/bin/turbo-worker.sh
 
 rm -f ~/.turbo_kilit
-echo -e "\e[1;32mv9.3 hazir! Takili kalan kilit sorunu kokten cozuldu.\e[0m"
+echo -e "\e[1;32mv9.4 hazir! Toplu indirmeler artik tarihe gore klasorleniyor (orn: TurboShared/2026-06-18/), tekli indirmeler klasorsuz kaliyor.\e[0m"
