@@ -1,185 +1,416 @@
-cat > ~/Video-kapak-resim-de-i-tirme/kapak_degistir.sh << 'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
+cat > ~/bin/termux-url-opener << 'EOF'
+#!/bin/bash
 
-# --- OTOMATİK TEMİZLİK (CTRL+Z KALINTILARI İÇİN) ---
-MEVCUT_PID=$$
-ESKI_SURECLER=$(pgrep -f "kapak_degistir.sh")
-for pid in $ESKI_SURECLER; do
-    if [ "$pid" != "$MEVCUT_PID" ]; then kill -9 "$pid" 2>/dev/null; fi
-done
+KUYRUK_FILE="$HOME/.turbo_kuyruk"
+KILIT_FILE="$HOME/.turbo_kilit"
+LOG_FILE="$HOME/.turbo_hatalar"
+BASE_DIR="/storage/emulated/0/Download/TurboShared"
+mkdir -p "$BASE_DIR"
 
-[ -f "$HOME/.kapak_ayarlari.conf" ] && source "$HOME/.kapak_ayarlari.conf"
-ISLENENLER_LISTESI="$HOME/.islenenler.txt"
-HATA_LOG="$HOME/.kapak_hata.log"
-touch "$ISLENENLER_LISTESI"
-
-PREFIX="〖ذال فیلم تقدیم میکندョ〗"
-
-# Neon Renk Seti
-RED='\033[1;31m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'
-BLUE='\033[1;34m'; MAGENTA='\033[1;35m'; CYAN='\033[1;36m'
-WHITE='\033[1;37m'; RESET='\033[0m'
-
-_kaydet_ayarlar() {
-    echo "VARSAYILAN_KLASOR=\"$VARSAYILAN_KLASOR\"" > "$HOME/.kapak_ayarlari.conf"
-    echo "VARSAYILAN_RESIM=\"$VARSAYILAN_RESIM\"" >> "$HOME/.kapak_ayarlari.conf"
+bildir() {
+    command -v termux-toast >/dev/null 2>&1 && termux-toast "$1"
 }
 
-_zaten_islendi_mi() {
-    local aranan="$1"
-    while IFS= read -r satir; do [ "$satir" = "$aranan" ] && return 0; done < "$ISLENENLER_LISTESI"
+url=$(echo "$1" | grep -oP 'https?://[^\s]+' | head -1)
+[[ -z "$url" ]] && exit 1
+
+kilit_gecerli_mi() {
+    [[ ! -f "$KILIT_FILE" ]] && return 1
+    local satir pid zaman simdi fark
+    satir=$(cat "$KILIT_FILE")
+    pid=$(echo "$satir" | cut -d'|' -f1)
+    zaman=$(echo "$satir" | cut -d'|' -f2)
+    simdi=$(date +%s)
+    [[ -z "$zaman" ]] && return 1
+    fark=$((simdi - zaman))
+    [ $fark -gt 600 ] && return 1
+    kill -0 "$pid" 2>/dev/null && return 0
     return 1
 }
 
-_ilerleme_goster() {
-    local mevcut=$1; local toplam=$2
-    local yuzde=$(( mevcut * 100 / toplam ))
-    local dolu=$(( yuzde / 5 )); local bos=$(( 20 - dolu ))
-    local bar=""
-    for ((i=0; i<dolu; i++)); do bar+="█"; done
-    for ((i=0; i<bos; i++));  do bar+="░"; done
-    printf "\r  ${CYAN}[${GREEN}%s${CYAN}] ${YELLOW}%3d%% ${MAGENTA}(%d/%d)${RESET}" "$bar" "$yuzde" "$mevcut" "$toplam"
-}
+if [[ $url == *"tiktok.com/@"* ]] && [[ $url != *"/video/"* ]] && [[ $url != *"/photo/"* ]]; then
+    echo "📌 TikTok profili tespit edildi!"
+    read -p "📥 Kaç video indirilsin? (Hepsi için 0): " adet
+    [[ -z "$adet" ]] && adet=10
+    echo "${url}|||${adet}" >> "$KUYRUK_FILE"
+else
+    echo "$url" >> "$KUYRUK_FILE"
+fi
 
-ana_menu() {
-    clear
-    echo -e "${MAGENTA}┌────────────────────────────────────────────────────────┐${RESET}"
-    echo -e "${MAGENTA}│${YELLOW}    👑   SAMIULLAH DILSUZ PRODUCTION   👑   ${MAGENTA}│${RESET}"
-    echo -e "${MAGENTA}├────────────────────────────────────────────────────────┤${RESET}"
-    echo -e "${MAGENTA}│${CYAN}    🎬   VİDEO KAPAK GÜNCELLEME MOTORU                   ${MAGENTA}│${RESET}"
-    echo -e "${MAGENTA}└────────────────────────────────────────────────────────┘${RESET}"
-    echo -e "  ${CYAN}Aktif Resim :${GREEN} ${VARSAYILAN_RESIM:-'Ayarlanmamış'}${RESET}"
-    echo -e "${MAGENTA}──────────────────────────────────────────────────────────${RESET}"
-    echo -e "  ${YELLOW}[1]${WHITE} Videoların Kapağını Güncelle ${MAGENTA}(Alt Klasörler Dahil)${RESET}"
-    echo -e "  ${YELLOW}[2]${WHITE} Hafıza Geçmişini Temizle    ${RED}(Baştan İşleme Alır)${RESET}"
-    echo -e "  ${YELLOW}[3]${WHITE} Kapak Resmini Değiştir      ${YELLOW}(Yeni Resim Seçimi)${RESET}"
-    echo -e "  ${BLUE}[4]${WHITE} Son Hata Loglarını Göster${RESET}"
-    echo -e "  ${RED}[5]${WHITE} Güvenli Çıkış${RESET}"
-    echo -e "${MAGENTA}──────────────────────────────────────────────────────────${RESET}"
-    read -p "  Seçiminiz [1-5]: " secim
+bildir "Kuyruga eklendi: $(echo $url | cut -c1-40)..."
 
-    case $secim in
-        1)
-            if [ -z "$VARSAYILAN_RESIM" ] || [ ! -f "$VARSAYILAN_RESIM" ]; then
-                echo -e "  ${RED}✗ HATA: Önce resim seçin (Seçenek 3)!${RESET}"; sleep 2; ana_menu; return
-            fi
-            echo ""
-            read -p "  [ENTER] veya Video Klasör Yolu: " girilen_klasor
-            [ -z "$girilen_klasor" ] && girilen_klasor="$VARSAYILAN_KLASOR"
-            if [ -z "$girilen_klasor" ] || [ ! -d "$girilen_klasor" ]; then
-                echo -e "  ${RED}✗ HATA: Klasör bulunamadı!${RESET}"; sleep 2; ana_menu; return
-            fi
+if kilit_gecerli_mi; then
+    bildir "Indirme zaten suruyor, sira bekleniyor..."
+    exit 0
+fi
 
-            VARSAYILAN_KLASOR="$girilen_klasor"; _kaydet_ayarlar
-            TEMP_LIST="$HOME/.video_listesi_tmp.txt"
-            > "$HATA_LOG"
-
-            # Hem MP4 hem MKV uzantılı tüm alt klasörleri tarar
-            find "$VARSAYILAN_KLASOR" \( -iname "*.mp4" -o -iname "*.mkv" \) > "$TEMP_LIST" 2>/dev/null
-            toplam=$(wc -l < "$TEMP_LIST")
-
-            if [ "$toplam" -eq 0 ]; then
-                echo -e "  ${RED}✗ Klasörde video yok!${RESET}"; rm -f "$TEMP_LIST"; sleep 2; ana_menu; return
-            fi
-
-            zaten=0
-            while IFS= read -r video; do
-                _zaten_islendi_mi "$(basename "$video")" && zaten=$((zaten + 1))
-            done < "$TEMP_LIST"
-            islencek=$((toplam - zaten))
-
-            clear
-            echo -e "${CYAN}┌────────────────────────────────────────┐${RESET}"
-            echo -e "${CYAN}│           KAPAK İŞLEMİ BAŞLADI         │${RESET}"
-            echo -e "${CYAN}└────────────────────────────────────────┘${RESET}"
-            echo -e "  ${CYAN}Toplam :${YELLOW} $toplam${RESET}  |  ${CYAN}Kalan :${MAGENTA} $islencek${RESET}  |  ${CYAN}Atlanan :${BLUE} $zaten${RESET}"
-            echo -e "${CYAN}──────────────────────────────────────────${RESET}"
-
-            if [ "$islencek" -eq 0 ]; then
-                echo -e "  ${GREEN}✓ Tüm videolar zaten yapılmış!${RESET}"; rm -f "$TEMP_LIST"; read -p "  Enter..." _; ana_menu; return
-            fi
-
-            islem_sayisi=0; basarili_sayisi=0; hata_sayisi=0
-            while IFS= read -r video; do
-                isim=$(basename "$video"); klasor=$(dirname "$video")
-                _zaten_islendi_mi "$isim" && continue
-
-                islem_sayisi=$((islem_sayisi + 1))
-                _ilerleme_goster "$islem_sayisi" "$islencek"
-
-                # Orijinal uzantı korunur (mkv -> mkv, mp4 -> mp4).
-                # Yanlış uzantı, içindeki codec'lerle konteyner uyuşmazlığına
-                # (örn. VP9/Opus/ASS altyazı -> mp4) ve hataya yol açıyordu.
-                uzanti="${isim##*.}"
-                temp_dosya="$klasor/temp_${MEVCUT_PID}_${islem_sayisi}.${uzanti}"
-
-                # Sadece video + ses stream'leri kopyalanır, altyazı/data
-                # stream'leri (sıkça konteyner uyuşmazlığına sebep olur) atlanır.
-                # Kapak resmi her zaman mjpeg'e encode edilir (en garanti yöntem).
-                ffmpeg -i "$video" -i "$VARSAYILAN_RESIM" \
-                    -map 0:v:0 -map 0:a? -map 1:v:0 \
-                    -c copy -c:v:1 mjpeg -disposition:v:1 attached_pic \
-                    "$temp_dosya" -y -loglevel error 2>>"$HATA_LOG"
-
-                if [ $? -eq 0 ] && [ -s "$temp_dosya" ]; then
-                    if [[ "$isim" == "$PREFIX"* ]]; then
-                        mv "$temp_dosya" "$video" 2>/dev/null; yeni_isim="$isim"
-                    else
-                        yeni_isim="${PREFIX}${isim}"
-                        mv "$temp_dosya" "$klasor/$yeni_isim" 2>/dev/null; rm -f "$video"
-                    fi
-                    echo "$yeni_isim" >> "$ISLENENLER_LISTESI"
-                    basarili_sayisi=$((basarili_sayisi + 1))
-                else
-                    echo "----- $isim -----" >> "$HATA_LOG"
-                    rm -f "$temp_dosya"; hata_sayisi=$((hata_sayisi + 1))
-                fi
-            done < "$TEMP_LIST"
-            rm -f "$TEMP_LIST"
-
-            echo -e "\n\n${GREEN}┌── İŞLEM ÖZETİ ─────────────────────────┐${RESET}"
-            echo -e "  ${GREEN}✓ Başarılı   : $basarili_sayisi Video${RESET}"
-            echo -e "  ${RED}✗ Hatalı     : $hata_sayisi Video${RESET}"
-            if [ "$hata_sayisi" -gt 0 ]; then
-                echo -e "  ${YELLOW}ℹ Detaylar: $HATA_LOG${RESET}"
-            fi
-            echo -e "${GREEN}└────────────────────────────────────────┘${RESET}"
-            read -p "  Enter'a bas..." _
-            ana_menu
-            ;;
-        2)
-            read -p "  Hafıza temizlensin mi? (e/h): " onay
-            if [[ "$onay" == "e" || "$onay" == "E" ]]; then
-                rm -f "$ISLENENLER_LISTESI" && touch "$ISLENENLER_LISTESI"
-                echo -e "  ${GREEN}✓ Hafıza sıfırlandı.${RESET}"
-            fi
-            sleep 1; ana_menu ;;
-        3)
-            echo ""
-            read -p "  Yeni Resim Tam Yolu: " yeni_r
-            if [ -f "$yeni_r" ]; then
-                VARSAYILAN_RESIM="$yeni_r"; _kaydet_ayarlar
-                echo -e "  ${GREEN}✓ Kapak güncellendi.${RESET}"
-            else
-                echo -e "  ${RED}✗ Dosya bulunamadı!${RESET}"
-            fi
-            sleep 1; ana_menu ;;
-        4)
-            clear
-            if [ -s "$HATA_LOG" ]; then
-                echo -e "${YELLOW}── SON HATA LOGU ($HATA_LOG) ──${RESET}"
-                tail -n 40 "$HATA_LOG"
-            else
-                echo -e "  ${GREEN}✓ Kayıtlı hata yok.${RESET}"
-            fi
-            echo ""
-            read -p "  Enter'a bas..." _
-            ana_menu ;;
-        5) exit 0 ;;
-        *) ana_menu ;;
-    esac
-}
-
-ana_menu
+rm -f "$KILIT_FILE"
+bash "$HOME/bin/turbo-worker.sh"
 EOF
-chmod +x ~/Video-kapak-resim-de-i-tirme/kapak_degistir.sh
+chmod +x ~/bin/termux-url-opener
+
+cat > ~/bin/turbo-worker.sh << 'EOF'
+#!/bin/bash
+
+KUYRUK_FILE="$HOME/.turbo_kuyruk"
+KILIT_FILE="$HOME/.turbo_kilit"
+LOG_FILE="$HOME/.turbo_hatalar"
+BASE_DIR="/storage/emulated/0/Download/TurboShared"
+MUZIK_DIR="/storage/emulated/0/Download/TurboShared/Muzik"
+mkdir -p "$BASE_DIR" "$MUZIK_DIR"
+
+bildir() {
+    command -v termux-toast >/dev/null 2>&1 && termux-toast "$1"
+}
+
+kilit_guncelle() {
+    echo "$$|$(date +%s)" > "$KILIT_FILE"
+}
+
+kilit_guncelle
+command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+
+( while true; do sleep 60; [[ -f "$KILIT_FILE" ]] && kilit_guncelle; done ) &
+TAZELEYICI_PID=$!
+
+temizlik() {
+    kill "$TAZELEYICI_PID" 2>/dev/null
+    rm -f "$KILIT_FILE"
+    command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock
+}
+trap temizlik EXIT
+
+is_tiktok() { [[ $1 == *"tiktok.com"* ]] || [[ $1 == *"vm.tiktok.com"* ]] || [[ $1 == *"vt.tiktok.com"* ]]; }
+is_facebook() { [[ $1 == *"facebook.com"* ]] || [[ $1 == *"fb.watch"* ]] || [[ $1 == *"fb.com"* ]]; }
+
+ag_bekle() {
+    local deneme=0
+    echo "Ag baglantisi kontrol ediliyor..."
+    while [ $deneme -lt 10 ]; do
+        if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 || ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+            return 0
+        fi
+        deneme=$((deneme + 1))
+        echo "Ag yok, 3 saniye sonra tekrar denenecek... ($deneme/10)"
+        sleep 3
+    done
+    return 1
+}
+
+progress_bar() {
+    local pct="$1"
+    local width=25
+    local dolu=$((pct * width / 100))
+    local bos=$((width - dolu))
+    local bar=""
+    local i
+    for ((i=0; i<dolu; i++)); do bar+="#"; done
+    for ((i=0; i<bos; i++)); do bar+="-"; done
+    printf "\r[%s] %3d%%" "$bar" "$pct"
+}
+
+yt_dlp_ilerlemeli() {
+    yt-dlp --newline "$@" 2>&1 | while IFS= read -r line; do
+        if [[ $line =~ \[download\][[:space:]]+([0-9]+)\.[0-9]%.*ETA[[:space:]]+([0-9:]+) ]]; then
+            progress_bar "${BASH_REMATCH[1]}"
+            printf "  ETA %s   " "${BASH_REMATCH[2]}"
+        elif [[ $line == *"[download] 100%"* ]]; then
+            progress_bar 100
+            echo ""
+        elif [[ $line == *"Merging formats"* ]]; then
+            echo ""
+            echo "Ses ve goruntu birlestiriliyor..."
+        elif [[ $line == *"ERROR"* ]]; then
+            echo ""
+            echo "UYARI: $line"
+        fi
+    done
+    return ${PIPESTATUS[0]}
+}
+
+# ─────────────────────────────────────────────
+# FOTOĞRAF/SLAYTTAKİ MÜZİĞİ İNDİR
+# ─────────────────────────────────────────────
+indir_muzik() {
+    local u="$1"
+    echo "Fotograf/slayt post tespit edildi, muzik olarak indiriliyor..."
+    yt-dlp \
+        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+        --add-header "Referer:https://www.tiktok.com/" \
+        --extractor-retries 10 \
+        --no-check-certificates \
+        --no-playlist \
+        -x \
+        --audio-format mp3 \
+        --audio-quality 0 \
+        -o "$MUZIK_DIR/%(title).50s [%(id)s].%(ext)s" \
+        "$u"
+
+    if [ $? -eq 0 ]; then
+        echo "Muzik indirildi!"
+        bildir "Muzik indirildi! Klasor: TurboShared/Muzik/"
+        return 0
+    else
+        echo "Muzik de indirilemedi."
+        return 1
+    fi
+}
+
+indir_tiktok() {
+    local u="$1"
+    local out="$BASE_DIR/%(title).50s [%(id)s].%(ext)s"
+    local extra="$2"
+    local hata_ciktisi
+
+    echo "Format 1 (kaliteli -0 varyanti)"
+    hata_ciktisi=$(yt_dlp_ilerlemeli $extra \
+        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+        --add-header "Referer:https://www.tiktok.com/" \
+        --extractor-retries 10 \
+        --socket-timeout 15 \
+        --no-check-certificates \
+        --no-playlist \
+        --merge-output-format mp4 \
+        -f "best[vcodec^=h264][format_id*=-0]/best[format_id*=-0]" \
+        --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
+        -o "$out" "$u" 2>&1)
+    local kod=$?
+    echo "$hata_ciktisi"
+
+    # Fotoğraf/slayt postu mu kontrol et
+    if echo "$hata_ciktisi" | grep -q "Unsupported URL.*photo"; then
+        indir_muzik "$u"
+        return $?
+    fi
+    [ $kod -eq 0 ] && return 0
+
+    echo ""
+    echo "Format 2 deneniyor (-1 haric)"
+    hata_ciktisi=$(yt_dlp_ilerlemeli $extra \
+        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+        --add-header "Referer:https://www.tiktok.com/" \
+        --extractor-retries 10 \
+        --socket-timeout 15 \
+        --no-check-certificates \
+        --no-playlist \
+        --audio-multistreams \
+        -f "bestvideo[format_id!*=-1]+bestaudio[format_id!*=-1]/best[format_id!*=-1]" \
+        --merge-output-format mp4 \
+        --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
+        -o "$out" "$u" 2>&1)
+    kod=$?
+    echo "$hata_ciktisi"
+
+    if echo "$hata_ciktisi" | grep -q "Unsupported URL.*photo"; then
+        indir_muzik "$u"
+        return $?
+    fi
+    [ $kod -eq 0 ] && return 0
+
+    echo ""
+    echo "Format 3 (son care)"
+    hata_ciktisi=$(yt_dlp_ilerlemeli $extra \
+        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+        --add-header "Referer:https://www.tiktok.com/" \
+        --extractor-retries 10 \
+        --socket-timeout 15 \
+        --no-check-certificates \
+        --no-playlist \
+        -f "best[ext=mp4]/best" \
+        --recode-video mp4 \
+        --postprocessor-args "ffmpeg:-c:a aac -ar 44100 -ac 2" \
+        -o "$out" "$u" 2>&1)
+    kod=$?
+    echo "$hata_ciktisi"
+
+    if echo "$hata_ciktisi" | grep -q "Unsupported URL.*photo"; then
+        indir_muzik "$u"
+        return $?
+    fi
+    return $kod
+}
+
+indir_facebook() {
+    local u="$1"
+    yt_dlp_ilerlemeli \
+        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+        --add-header "Accept-Language:tr-TR,tr;q=0.9,en;q=0.8" \
+        --extractor-retries 5 \
+        --socket-timeout 15 \
+        --no-check-certificates \
+        --no-playlist \
+        --audio-multistreams \
+        -f "bestvideo+bestaudio/best" \
+        --merge-output-format mp4 \
+        --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
+        -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" "$u" && return 0
+
+    echo ""
+    echo "Format 2 deneniyor"
+    yt_dlp_ilerlemeli \
+        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+        --add-header "Accept-Language:tr-TR,tr;q=0.9,en;q=0.8" \
+        --extractor-retries 5 \
+        --socket-timeout 15 \
+        --no-check-certificates \
+        --no-playlist \
+        -f "best[ext=mp4]/best" \
+        --recode-video mp4 \
+        --postprocessor-args "ffmpeg:-c:a aac -ar 44100 -ac 2" \
+        -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" "$u"
+}
+
+indir_genel() {
+    local u="$1"
+    yt_dlp_ilerlemeli \
+        --no-playlist \
+        --no-check-certificates \
+        --socket-timeout 15 \
+        -f "bestvideo+bestaudio/best" \
+        --merge-output-format mp4 \
+        --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
+        -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" "$u"
+}
+
+indir_profil() {
+    local u="$1"
+    local adet="$2"
+    local tarih=$(date +%Y-%m-%d)
+    local out="$BASE_DIR/$tarih/%(title).50s [%(id)s].%(ext)s"
+
+    [[ "$adet" == "0" ]] && playlist_opt="" || playlist_opt="--playlist-items 1-$adet"
+
+    yt_dlp_ilerlemeli $playlist_opt \
+        --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+        --add-header "Referer:https://www.tiktok.com/" \
+        --extractor-retries 10 \
+        --socket-timeout 15 \
+        --no-check-certificates \
+        --merge-output-format mp4 \
+        -f "best[vcodec^=h264][format_id*=-0]/best[format_id*=-0]/best" \
+        --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
+        -o "$out" "$u"
+}
+
+indir_dene() {
+    local fonksiyon="$1"
+    local u="$2"
+    local extra="$3"
+    local tekrar=0
+    local max_tekrar=2
+
+    while [ $tekrar -le $max_tekrar ]; do
+        if [ $tekrar -gt 0 ]; then
+            echo ""
+            echo ">> Tekrar deneme $tekrar/$max_tekrar - $u"
+            ag_bekle
+        fi
+
+        kilit_guncelle
+        "$fonksiyon" "$u" "$extra"
+        if [ $? -eq 0 ]; then
+            return 0
+        fi
+
+        if ! ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+            echo "Ag baglantisi kopmus, bekleniyor..."
+            ag_bekle
+        else
+            sleep 2
+        fi
+
+        tekrar=$((tekrar + 1))
+    done
+    return 1
+}
+
+link_isle() {
+    local satir="$1"
+    local url adet
+
+    if [[ $satir == *"|||"* ]]; then
+        url="${satir%%|||*}"
+        adet="${satir##*|||}"
+    else
+        url="$satir"
+        adet=""
+    fi
+
+    echo ""
+    echo "========================================"
+    echo "TurboShared v9.5"
+    echo "$url"
+    echo "========================================"
+
+    local basarili=1
+
+    if [[ -n "$adet" ]]; then
+        echo "Profil indirme modu - $adet video"
+        indir_dene indir_profil "$url" "$adet" && basarili=0
+    elif is_tiktok "$url"; then
+        echo "TikTok"
+        indir_dene indir_tiktok "$url" "" && basarili=0
+    elif is_facebook "$url"; then
+        echo "Facebook"
+        indir_dene indir_facebook "$url" "" && basarili=0
+    else
+        echo "Genel"
+        indir_dene indir_genel "$url" "" && basarili=0
+    fi
+
+    if [ $basarili -eq 0 ]; then
+        echo ""
+        echo "Tamamlandi!"
+        bildir "Indirildi"
+        return 0
+    else
+        echo ""
+        echo "Hata! Link kaydediliyor."
+        bildir "Hata, link loglandi"
+        echo "$satir" >> "$LOG_FILE"
+        return 1
+    fi
+}
+
+while true; do
+    satir=$(head -1 "$KUYRUK_FILE" 2>/dev/null)
+    [[ -z "$satir" ]] && break
+
+    link_isle "$satir"
+
+    tail -n +2 "$KUYRUK_FILE" > "$KUYRUK_FILE.tmp" && mv "$KUYRUK_FILE.tmp" "$KUYRUK_FILE"
+done
+
+if [[ -f "$LOG_FILE" ]] && [[ -s "$LOG_FILE" ]]; then
+    echo ""
+    echo "========================================"
+    echo "Hatali linkler tekrar deneniyor..."
+    echo "========================================"
+
+    cp "$LOG_FILE" "$LOG_FILE.tekrar"
+    > "$LOG_FILE"
+
+    while IFS= read -r hatali_satir; do
+        [[ -z "$hatali_satir" ]] && continue
+        echo ""
+        echo ">> Hatali link tekrar deneniyor: $hatali_satir"
+        ag_bekle
+        link_isle "$hatali_satir"
+    done < "$LOG_FILE.tekrar"
+
+    rm -f "$LOG_FILE.tekrar"
+fi
+
+echo ""
+echo "Tum indirmeler tamamlandi! Klasor: $BASE_DIR/"
+if [[ -s "$LOG_FILE" ]]; then
+    echo "Hala basarisiz olan linkler var: $LOG_FILE"
+    bildir "Tamamlandi, bazi videolar hala basarisiz"
+else
+    bildir "Tum indirmeler tamamlandi!"
+fi
+EOF
+chmod +x ~/bin/turbo-worker.sh
+
+rm -f ~/.turbo_kilit
+echo -e "\e[1;32mv9.5 hazir! Fotograf/slayt postlari artik muzik olarak indiriliyor, TurboShared/Muzik/ klasorune kaydediliyor.\e[0m"
