@@ -4,6 +4,7 @@ cat > ~/bin/termux-url-opener << 'EOF'
 KUYRUK_FILE="$HOME/.turbo_kuyruk"
 KILIT_FILE="$HOME/.turbo_kilit"
 LOG_FILE="$HOME/.turbo_hatalar"
+CANLI_LOG="$HOME/.turbo_canli_log"
 BASE_DIR="/storage/emulated/0/Download/TurboShared"
 mkdir -p "$BASE_DIR"
 
@@ -37,15 +38,39 @@ else
     echo "$url" >> "$KUYRUK_FILE"
 fi
 
-bildir "Kuyruga eklendi: $(echo $url | cut -c1-40)..."
+echo ""
+echo "========================================"
+echo "  TurboShared v9.6"
+echo "========================================"
 
 if kilit_gecerli_mi; then
-    bildir "Indirme zaten suruyor, sira bekleniyor..."
-    exit 0
+    echo "  Zaten indirme surüyor, kuyruğa eklendi"
+    echo "  Sıradaki video: $(wc -l < "$KUYRUK_FILE") link bekliyor"
+    echo "========================================"
+    echo ""
+    echo "--- CANLI INDIRME DURUMU ---"
+    echo "(Çıkmak için CTRL+C)"
+    echo ""
+    # Canlı log takibi — worker ne yapıyorsa göster
+    tail -f "$CANLI_LOG" 2>/dev/null &
+    TAIL_PID=$!
+    # Worker bitince tail'i de kapat
+    while kilit_gecerli_mi; do
+        sleep 2
+    done
+    kill "$TAIL_PID" 2>/dev/null
+    echo ""
+    echo "========================================"
+    echo "  Tum indirmeler tamamlandi!"
+    echo "========================================"
+else
+    rm -f "$KILIT_FILE"
+    echo "  Indirme basliyor..."
+    echo "========================================"
+    echo ""
+    # Worker'ı başlat, çıktısını hem ekrana hem log dosyasına yaz
+    bash "$HOME/bin/turbo-worker.sh" 2>&1 | tee "$CANLI_LOG"
 fi
-
-rm -f "$KILIT_FILE"
-bash "$HOME/bin/turbo-worker.sh"
 EOF
 chmod +x ~/bin/termux-url-opener
 
@@ -91,7 +116,7 @@ ag_bekle() {
             return 0
         fi
         deneme=$((deneme + 1))
-        echo "Ag yok, 3 saniye sonra tekrar denenecek... ($deneme/10)"
+        echo "Ag yok, 3 saniye sonra tekrar... ($deneme/10)"
         sleep 3
     done
     return 1
@@ -99,6 +124,7 @@ ag_bekle() {
 
 progress_bar() {
     local pct="$1"
+    local eta="$2"
     local width=25
     local dolu=$((pct * width / 100))
     local bos=$((width - dolu))
@@ -106,34 +132,31 @@ progress_bar() {
     local i
     for ((i=0; i<dolu; i++)); do bar+="#"; done
     for ((i=0; i<bos; i++)); do bar+="-"; done
-    printf "\r[%s] %3d%%" "$bar" "$pct"
+    printf "\r  [%s] %3d%%  ETA: %s   " "$bar" "$pct" "$eta"
 }
 
 yt_dlp_ilerlemeli() {
     yt-dlp --newline "$@" 2>&1 | while IFS= read -r line; do
         if [[ $line =~ \[download\][[:space:]]+([0-9]+)\.[0-9]%.*ETA[[:space:]]+([0-9:]+) ]]; then
-            progress_bar "${BASH_REMATCH[1]}"
-            printf "  ETA %s   " "${BASH_REMATCH[2]}"
+            progress_bar "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
         elif [[ $line == *"[download] 100%"* ]]; then
-            progress_bar 100
+            progress_bar 100 "00:00"
             echo ""
         elif [[ $line == *"Merging formats"* ]]; then
             echo ""
-            echo "Ses ve goruntu birlestiriliyor..."
+            echo "  Ses ve goruntu birlestiriliyor..."
         elif [[ $line == *"ERROR"* ]]; then
             echo ""
-            echo "UYARI: $line"
+            echo "  UYARI: $line"
         fi
     done
     return ${PIPESTATUS[0]}
 }
 
-# ─────────────────────────────────────────────
-# FOTOĞRAF/SLAYTTAKİ MÜZİĞİ İNDİR
-# ─────────────────────────────────────────────
 indir_muzik() {
     local u="$1"
-    echo "Fotograf/slayt post tespit edildi, muzik olarak indiriliyor..."
+    echo ""
+    echo "  Fotograf/slayt post! Muzik olarak indiriliyor..."
     yt-dlp \
         --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
         --add-header "Referer:https://www.tiktok.com/" \
@@ -147,11 +170,12 @@ indir_muzik() {
         "$u"
 
     if [ $? -eq 0 ]; then
-        echo "Muzik indirildi!"
-        bildir "Muzik indirildi! Klasor: TurboShared/Muzik/"
+        echo ""
+        echo "  Muzik indirildi! -> TurboShared/Muzik/"
+        bildir "Muzik indirildi! TurboShared/Muzik/"
         return 0
     else
-        echo "Muzik de indirilemedi."
+        echo "  Muzik de indirilemedi."
         return 1
     fi
 }
@@ -160,10 +184,10 @@ indir_tiktok() {
     local u="$1"
     local out="$BASE_DIR/%(title).50s [%(id)s].%(ext)s"
     local extra="$2"
-    local hata_ciktisi
+    local cikti
 
-    echo "Format 1 (kaliteli -0 varyanti)"
-    hata_ciktisi=$(yt_dlp_ilerlemeli $extra \
+    echo "  Format 1 (kaliteli -0 varyanti)"
+    cikti=$(yt_dlp_ilerlemeli $extra \
         --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
         --add-header "Referer:https://www.tiktok.com/" \
         --extractor-retries 10 \
@@ -175,18 +199,13 @@ indir_tiktok() {
         --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
         -o "$out" "$u" 2>&1)
     local kod=$?
-    echo "$hata_ciktisi"
-
-    # Fotoğraf/slayt postu mu kontrol et
-    if echo "$hata_ciktisi" | grep -q "Unsupported URL.*photo"; then
-        indir_muzik "$u"
-        return $?
-    fi
+    echo "$cikti"
+    echo "$cikti" | grep -q "Unsupported URL.*photo" && { indir_muzik "$u"; return $?; }
     [ $kod -eq 0 ] && return 0
 
     echo ""
-    echo "Format 2 deneniyor (-1 haric)"
-    hata_ciktisi=$(yt_dlp_ilerlemeli $extra \
+    echo "  Format 2 (-1 haric)"
+    cikti=$(yt_dlp_ilerlemeli $extra \
         --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
         --add-header "Referer:https://www.tiktok.com/" \
         --extractor-retries 10 \
@@ -199,17 +218,13 @@ indir_tiktok() {
         --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
         -o "$out" "$u" 2>&1)
     kod=$?
-    echo "$hata_ciktisi"
-
-    if echo "$hata_ciktisi" | grep -q "Unsupported URL.*photo"; then
-        indir_muzik "$u"
-        return $?
-    fi
+    echo "$cikti"
+    echo "$cikti" | grep -q "Unsupported URL.*photo" && { indir_muzik "$u"; return $?; }
     [ $kod -eq 0 ] && return 0
 
     echo ""
-    echo "Format 3 (son care)"
-    hata_ciktisi=$(yt_dlp_ilerlemeli $extra \
+    echo "  Format 3 (son care)"
+    cikti=$(yt_dlp_ilerlemeli $extra \
         --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
         --add-header "Referer:https://www.tiktok.com/" \
         --extractor-retries 10 \
@@ -221,12 +236,8 @@ indir_tiktok() {
         --postprocessor-args "ffmpeg:-c:a aac -ar 44100 -ac 2" \
         -o "$out" "$u" 2>&1)
     kod=$?
-    echo "$hata_ciktisi"
-
-    if echo "$hata_ciktisi" | grep -q "Unsupported URL.*photo"; then
-        indir_muzik "$u"
-        return $?
-    fi
+    echo "$cikti"
+    echo "$cikti" | grep -q "Unsupported URL.*photo" && { indir_muzik "$u"; return $?; }
     return $kod
 }
 
@@ -246,7 +257,7 @@ indir_facebook() {
         -o "$BASE_DIR/%(title).50s [%(id)s].%(ext)s" "$u" && return 0
 
     echo ""
-    echo "Format 2 deneniyor"
+    echo "  Format 2 deneniyor"
     yt_dlp_ilerlemeli \
         --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
         --add-header "Accept-Language:tr-TR,tr;q=0.9,en;q=0.8" \
@@ -302,18 +313,16 @@ indir_dene() {
     while [ $tekrar -le $max_tekrar ]; do
         if [ $tekrar -gt 0 ]; then
             echo ""
-            echo ">> Tekrar deneme $tekrar/$max_tekrar - $u"
+            echo "  >> Tekrar deneme $tekrar/$max_tekrar"
             ag_bekle
         fi
 
         kilit_guncelle
         "$fonksiyon" "$u" "$extra"
-        if [ $? -eq 0 ]; then
-            return 0
-        fi
+        [ $? -eq 0 ] && return 0
 
         if ! ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
-            echo "Ag baglantisi kopmus, bekleniyor..."
+            echo "  Ag kopmus, bekleniyor..."
             ag_bekle
         else
             sleep 2
@@ -338,34 +347,34 @@ link_isle() {
 
     echo ""
     echo "========================================"
-    echo "TurboShared v9.5"
-    echo "$url"
+    echo "  TurboShared v9.6"
+    echo "  $url"
     echo "========================================"
 
     local basarili=1
 
     if [[ -n "$adet" ]]; then
-        echo "Profil indirme modu - $adet video"
+        echo "  Profil modu - $adet video"
         indir_dene indir_profil "$url" "$adet" && basarili=0
     elif is_tiktok "$url"; then
-        echo "TikTok"
+        echo "  TikTok"
         indir_dene indir_tiktok "$url" "" && basarili=0
     elif is_facebook "$url"; then
-        echo "Facebook"
+        echo "  Facebook"
         indir_dene indir_facebook "$url" "" && basarili=0
     else
-        echo "Genel"
+        echo "  Genel"
         indir_dene indir_genel "$url" "" && basarili=0
     fi
 
     if [ $basarili -eq 0 ]; then
         echo ""
-        echo "Tamamlandi!"
+        echo "  Tamamlandi!"
         bildir "Indirildi"
         return 0
     else
         echo ""
-        echo "Hata! Link kaydediliyor."
+        echo "  Hata! Link kaydediliyor."
         bildir "Hata, link loglandi"
         echo "$satir" >> "$LOG_FILE"
         return 1
@@ -375,37 +384,32 @@ link_isle() {
 while true; do
     satir=$(head -1 "$KUYRUK_FILE" 2>/dev/null)
     [[ -z "$satir" ]] && break
-
     link_isle "$satir"
-
     tail -n +2 "$KUYRUK_FILE" > "$KUYRUK_FILE.tmp" && mv "$KUYRUK_FILE.tmp" "$KUYRUK_FILE"
 done
 
 if [[ -f "$LOG_FILE" ]] && [[ -s "$LOG_FILE" ]]; then
     echo ""
     echo "========================================"
-    echo "Hatali linkler tekrar deneniyor..."
+    echo "  Hatali linkler tekrar deneniyor..."
     echo "========================================"
-
     cp "$LOG_FILE" "$LOG_FILE.tekrar"
     > "$LOG_FILE"
-
     while IFS= read -r hatali_satir; do
         [[ -z "$hatali_satir" ]] && continue
-        echo ""
-        echo ">> Hatali link tekrar deneniyor: $hatali_satir"
         ag_bekle
         link_isle "$hatali_satir"
     done < "$LOG_FILE.tekrar"
-
     rm -f "$LOG_FILE.tekrar"
 fi
 
 echo ""
-echo "Tum indirmeler tamamlandi! Klasor: $BASE_DIR/"
+echo "========================================"
+echo "  Tum indirmeler tamamlandi!"
+echo "  Klasor: $BASE_DIR/"
+echo "========================================"
 if [[ -s "$LOG_FILE" ]]; then
-    echo "Hala basarisiz olan linkler var: $LOG_FILE"
-    bildir "Tamamlandi, bazi videolar hala basarisiz"
+    bildir "Tamamlandi, bazi videolar basarisiz"
 else
     bildir "Tum indirmeler tamamlandi!"
 fi
@@ -413,4 +417,4 @@ EOF
 chmod +x ~/bin/turbo-worker.sh
 
 rm -f ~/.turbo_kilit
-echo -e "\e[1;32mv9.5 hazir! Fotograf/slayt postlari artik muzik olarak indiriliyor, TurboShared/Muzik/ klasorune kaydediliyor.\e[0m"
+echo -e "\e[1;32mv9.6 hazir! Artik indirme aninda canli goruluyor.\e[0m"
