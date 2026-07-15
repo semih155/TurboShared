@@ -32,7 +32,6 @@ if [[ $url == *"tiktok.com/@"* ]] && [[ $url != *"/video/"* ]] && [[ $url != *"/
     echo "📌 TikTok profili tespit edildi!"
     read -p "📥 Kaç video indirilsin? (Hepsi için 0): " adet
     [[ -z "$adet" ]] && adet=10
-    # Saati de kuyruğa ekle — her profil paylaşımında o anın saati
     saat=$(date +%Y-%m-%d_%H-%M)
     echo "${url}|||${adet}|||${saat}" >> "$KUYRUK_FILE"
 else
@@ -41,7 +40,7 @@ fi
 
 echo ""
 echo "========================================"
-echo "  TurboShared v9.7"
+echo "  TurboShared v9.9"
 echo "========================================"
 
 if kilit_gecerli_mi; then
@@ -50,8 +49,9 @@ if kilit_gecerli_mi; then
     echo "========================================"
     echo ""
     echo "--- CANLI INDIRME DURUMU ---"
-    echo "(Cıkmak için CTRL+C)"
+    echo "(Cıkmak icin CTRL+C)"
     echo ""
+    # Mevcut worker'ın canlı çıktısını takip et
     tail -f "$CANLI_LOG" 2>/dev/null &
     TAIL_PID=$!
     while kilit_gecerli_mi; do
@@ -63,7 +63,9 @@ if kilit_gecerli_mi; then
     echo "  Tum indirmeler tamamlandi!"
     echo "========================================"
 else
+    # Eski log ve kilidi temizle, sıfırdan başla
     rm -f "$KILIT_FILE"
+    > "$CANLI_LOG"
     echo "  Indirme basliyor..."
     echo "========================================"
     echo ""
@@ -134,14 +136,29 @@ progress_bar() {
 
 yt_dlp_ilerlemeli() {
     yt-dlp --newline "$@" 2>&1 | while IFS= read -r line; do
-        if [[ $line =~ \[download\][[:space:]]+([0-9]+)\.[0-9]%.*ETA[[:space:]]+([0-9:]+) ]]; then
+
+        if [[ $line =~ \[download\]\ Downloading\ item\ ([0-9]+)\ of\ ([0-9]+) ]]; then
+            echo ""
+            echo "  --- Video ${BASH_REMATCH[1]}/${BASH_REMATCH[2]} ---"
+
+        elif [[ $line =~ \[download\][[:space:]]+([0-9]+)\.[0-9]+%.*ETA[[:space:]]+([0-9:]+) ]]; then
             progress_bar "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+
         elif [[ $line == *"[download] 100%"* ]]; then
             progress_bar 100 "00:00"
             echo ""
+
         elif [[ $line == *"Merging formats"* ]]; then
             echo ""
-            echo "  Ses ve goruntu birlestiriliyor..."
+            echo "  Birlestiriliyor..."
+
+        elif [[ $line == *"Destination:"* ]]; then
+            dosya=$(echo "$line" | sed 's/.*Destination: //' | rev | cut -d'/' -f1 | rev | cut -c1-45)
+            echo "  Dosya: $dosya"
+
+        elif [[ $line == *"has already been downloaded"* ]]; then
+            echo "  Zaten indirilmis, atlaniyor"
+
         elif [[ $line == *"ERROR"* ]]; then
             echo ""
             echo "  UYARI: $line"
@@ -157,15 +174,12 @@ indir_muzik() {
     yt-dlp \
         --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
         --add-header "Referer:https://www.tiktok.com/" \
-        --extractor-retries 10 \
-        --no-check-certificates \
-        --no-playlist \
+        --extractor-retries 10 --no-check-certificates --no-playlist \
         -x --audio-format mp3 --audio-quality 0 \
-        -o "$MUZIK_DIR/%(title).50s [%(id)s].%(ext)s" \
-        "$u"
+        -o "$MUZIK_DIR/%(title).50s [%(id)s].%(ext)s" "$u"
     if [ $? -eq 0 ]; then
         echo "  Muzik indirildi! -> TurboShared/Muzik/"
-        bildir "Muzik indirildi! TurboShared/Muzik/"
+        bildir "Muzik indirildi!"
         return 0
     else
         echo "  Muzik de indirilemedi."
@@ -174,18 +188,15 @@ indir_muzik() {
 }
 
 indir_tiktok() {
-    local u="$1"
+    local u="$1" extra="$2" cikti kod
     local out="$BASE_DIR/%(title).50s [%(id)s].%(ext)s"
-    local extra="$2"
-    local cikti kod
 
     echo "  Format 1 (kaliteli -0 varyanti)"
     cikti=$(yt_dlp_ilerlemeli $extra \
         --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
         --add-header "Referer:https://www.tiktok.com/" \
         --extractor-retries 10 --socket-timeout 15 \
-        --no-check-certificates --no-playlist \
-        --merge-output-format mp4 \
+        --no-check-certificates --no-playlist --merge-output-format mp4 \
         -f "best[vcodec^=h264][format_id*=-0]/best[format_id*=-0]" \
         --postprocessor-args "ffmpeg:-c:v copy -c:a aac -ar 44100 -ac 2" \
         -o "$out" "$u" 2>&1)
@@ -253,13 +264,9 @@ indir_genel() {
 }
 
 indir_profil() {
-    local u="$1"
-    local adet="$2"
-    local saat="$3"
-    # Saat bilgisi yoksa o anki zamanı kullan
+    local u="$1" adet="$2" saat="$3"
     [[ -z "$saat" ]] && saat=$(date +%Y-%m-%d_%H-%M)
     local out="$BASE_DIR/$saat/%(title).50s [%(id)s].%(ext)s"
-
     [[ "$adet" == "0" ]] && playlist_opt="" || playlist_opt="--playlist-items 1-$adet"
 
     yt_dlp_ilerlemeli $playlist_opt \
@@ -273,12 +280,8 @@ indir_profil() {
 }
 
 indir_dene() {
-    local fonksiyon="$1"
-    local u="$2"
-    local extra="$3"
-    local extra2="$4"
-    local tekrar=0
-    local max_tekrar=2
+    local fonksiyon="$1" u="$2" extra="$3" extra2="$4"
+    local tekrar=0 max_tekrar=2
 
     while [ $tekrar -le $max_tekrar ]; do
         if [ $tekrar -gt 0 ]; then
@@ -302,12 +305,13 @@ indir_dene() {
 
 link_isle() {
     local satir="$1"
-    local url adet saat
+    local url adet saat gecici
 
     if [[ $satir == *"|||"* ]]; then
-        url=$(echo "$satir" | cut -d'|' -f1)
-        adet=$(echo "$satir" | cut -d'|' -f4)
-        saat=$(echo "$satir" | cut -d'|' -f7)
+        url="${satir%%|||*}"
+        gecici="${satir#*|||}"
+        adet="${gecici%%|||*}"
+        saat="${gecici##*|||}"
     else
         url="$satir"
         adet=""
@@ -316,14 +320,14 @@ link_isle() {
 
     echo ""
     echo "========================================"
-    echo "  TurboShared v9.7"
+    echo "  TurboShared v9.9"
     echo "  $url"
     echo "========================================"
 
     local basarili=1
 
     if [[ -n "$adet" ]]; then
-        echo "  Profil modu - $adet video -> $saat/"
+        echo "  Profil modu - $adet video -> klasor: $saat/"
         indir_dene indir_profil "$url" "$adet" "$saat" && basarili=0
     elif is_tiktok "$url"; then
         echo "  TikTok"
@@ -339,12 +343,9 @@ link_isle() {
     if [ $basarili -eq 0 ]; then
         echo ""; echo "  Tamamlandi!"
         bildir "Indirildi"
-        return 0
     else
         echo ""; echo "  Hata! Bu link atlaniyor."
         bildir "Hata, link atlandi"
-        # Hata listesine KAYDETME — direkt sil
-        return 1
     fi
 }
 
@@ -355,7 +356,6 @@ while true; do
     tail -n +2 "$KUYRUK_FILE" > "$KUYRUK_FILE.tmp" && mv "$KUYRUK_FILE.tmp" "$KUYRUK_FILE"
 done
 
-# Eski hata dosyasını da temizle
 > "$HOME/.turbo_hatalar" 2>/dev/null
 
 echo ""
@@ -367,8 +367,6 @@ bildir "Tum indirmeler tamamlandi!"
 EOF
 chmod +x ~/bin/turbo-worker.sh
 
-# Eski hata listesini de şimdi temizle
 > ~/.turbo_hatalar
-rm -f ~/.turbo_kilit
-
-echo -e "\e[1;32mv9.7 hazir! Hata listesi kaldirildi, profil klasorleri saate gore ayrildi.\e[0m"
+rm -f ~/.turbo_kilit ~/.turbo_canli_log ~/.turbo_kuyruk
+echo -e "\e[1;32mv9.9 hazir! Eski log sorunu cozuldu.\e[0m"
